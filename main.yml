@@ -1,0 +1,112 @@
+- hosts: kube_master
+  become: true
+  become_method: sudo
+  become_user: root
+  vars_files:
+    - secret.yml
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: Creating a MYSQL pod
+      k8s:
+        state: present
+        api_version: v1
+        namespace: my-namespace
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            labels:
+              run: mydb
+            name: mydb
+          spec:
+            containers:
+            - env:
+              - name: MYSQL_ROOT_PASSWORD
+                value: "{{ pass }}"
+              - name: MYSQL_USER
+                value: "{{ user }}"
+              - name: MYSQL_PASSWORD
+                value: "{{ user_pass }}"
+              - name: MYSQL_DATABASE
+                value: "{{ database }}"
+              image: mysql:5.7
+              name: mydb12
+              ports:
+              - containerPort: 3306
+                protocol: TCP
+
+    - name: Describe mysql pod
+      k8s_info:
+        wait: yes
+        wait_sleep: 10
+        api_version: v1
+        namespace: my-namespace
+        kind: Pod
+        label_selectors:
+          - run = mydb
+      register: token
+    
+    - name: Creating a WordPress Pod
+      k8s:
+        state: present
+        api_version: v1
+        namespace: my-namespace
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            labels:
+              run: mywp
+            name: mywp
+          spec:
+            containers:
+            - env:
+              - name: WORDPRESS_DB_HOST
+                value: "{{ token.resources[0].status.podIP }}:3306"
+              - name: WORDPRESS_DB_USER
+                value: "{{ user }}"
+              - name: WORDPRESS_DB_PASSWORD
+                value: "{{ user_pass }}"
+              - name: WORDPRESS_DB_NAME
+                value: "{{ database }}"
+              image: wordpress:5.1.1-php7.3-apache
+              name: mywp
+              
+    - name: Deploying the pod
+      k8s:
+        state: present
+        api_version: v1
+        namespace: my-namespace
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            labels:
+              run: mywp
+            name: mywp
+          spec:
+            ports:
+            - port: 80
+              protocol: TCP
+              targetPort: 80
+            selector:
+              run: mywp
+            type: NodePort
+    
+    - name: Describing the services
+      k8s_info:
+        api_version: v1
+        namespace: my-namespace
+        kind: Service
+        label_selectors:
+          - run = mywp
+      register: ip_info
+
+    - name: Getting the kubernetes Master IP
+      debug:
+        var:  ansible_ssh_host 
+    
+    - name: Port number to connect with Wordpress IP
+      debug:
+        var:  ip_info.resources[0].spec.ports[0].nodePort
